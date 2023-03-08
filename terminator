@@ -33,7 +33,7 @@ try:
     import gi
     gi.require_version('Gtk','3.0')
     # pylint: disable-msg=W0611
-    from gi.repository import Gtk, Gdk
+    from gi.repository import Gtk, Gdk, GLib
 
     if Gdk.Display.get_default() == None:
         print('You need to run terminator in an X environment. ' \
@@ -54,19 +54,13 @@ from terminatorlib.layoutlauncher import LayoutLauncher
 from terminatorlib.configjson import ConfigJson
 
 if __name__ == '__main__':
-    # Workaround for IBus intefering with broadcast when using dead keys
-    # Environment also needs IBUS_DISABLE_SNOOPER=1, or double chars appear
-    # in the receivers.
-    username = pwd.getpwuid(os.getuid()).pw_name
-    ibus_running = [p for p in psutil.process_iter() if p.name() == 'ibus-daemon' and p.username() == username]
-    ibus_running = len(ibus_running) > 0
-    if ibus_running:
-        os.environ['IBUS_DISABLE_SNOOPER']='1'
 
     dbus_service = None
 
     dbg ("%s starting up, version %s" % (APP_NAME, APP_VERSION))
   
+    GLib.set_prgname(APP_NAME)
+
     OPTIONS,dbus_options = terminatorlib.optionparse.parse_options()
     if OPTIONS.configjson:
         configjson = ConfigJson()
@@ -122,7 +116,6 @@ if __name__ == '__main__':
         MAKER = Factory()
         TERMINATOR.set_dbus_data(dbus_service)
         TERMINATOR.reconfigure()
-        TERMINATOR.ibus_running = ibus_running
 
         try:
             dbg('Creating a terminal with layout: %s' % OPTIONS.layout)

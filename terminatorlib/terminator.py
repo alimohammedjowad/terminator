@@ -8,6 +8,8 @@ import gi
 gi.require_version('Vte', '2.91')
 from gi.repository import Gtk, Gdk, Vte
 from gi.repository.GLib import GError
+import itertools
+import random
 
 from . import borg
 from .borg import Borg
@@ -16,6 +18,7 @@ from .keybindings import Keybindings
 from .util import dbg, err, enumerate_descendants
 from .factory import Factory
 from .version import APP_NAME, APP_VERSION
+from .translation import _
 
 try:
     from gi.repository import GdkX11
@@ -54,7 +57,6 @@ class Terminator(Borg):
     dbus_path = None
     dbus_name = None
     debug_address = None
-    ibus_running = None
 
     doing_layout = None
     layoutname = None
@@ -123,14 +125,12 @@ class Terminator(Borg):
     def register_window(self, window):
         """Register a new window widget"""
         if window not in self.windows:
-            dbg('Terminator::register_window: registering %s:%s' % (id(window),
-                type(window)))
+            dbg('registering %s:%s' % (id(window), type(window)))
             self.windows.append(window)
 
     def deregister_window(self, window):
         """de-register a window widget"""
-        dbg('Terminator::deregister_window: de-registering %s:%s' %
-                (id(window), type(window)))
+        dbg('de-registering %s:%s' % (id(window), type(window)))
         if window in self.windows:
             self.windows.remove(window)
         else:
@@ -144,14 +144,12 @@ class Terminator(Borg):
     def register_launcher_window(self, window):
         """Register a new launcher window widget"""
         if window not in self.launcher_windows:
-            dbg('Terminator::register_launcher_window: registering %s:%s' % (id(window),
-                type(window)))
+            dbg('registering %s:%s' % (id(window), type(window)))
             self.launcher_windows.append(window)
 
     def deregister_launcher_window(self, window):
         """de-register a launcher window widget"""
-        dbg('Terminator::deregister_launcher_window: de-registering %s:%s' %
-                (id(window), type(window)))
+        dbg('de-registering %s:%s' % (id(window), type(window)))
         if window in self.launcher_windows:
             self.launcher_windows.remove(window)
         else:
@@ -165,13 +163,13 @@ class Terminator(Borg):
     def register_terminal(self, terminal):
         """Register a new terminal widget"""
         if terminal not in self.terminals:
-            dbg('Terminator::register_terminal: registering %s:%s' %
+            dbg('registering %s:%s' %
                     (id(terminal), type(terminal)))
             self.terminals.append(terminal)
 
     def deregister_terminal(self, terminal):
         """De-register a terminal widget"""
-        dbg('Terminator::deregister_terminal: de-registering %s:%s' %
+        dbg('de-registering %s:%s' %
                 (id(terminal), type(terminal)))
         self.terminals.remove(terminal)
 
@@ -180,8 +178,7 @@ class Terminator(Borg):
             for window in self.windows:
                 window.destroy()
         else:
-            dbg('Terminator::deregister_terminal: %d terminals remain' %
-                    len(self.terminals))
+            dbg('%d terminals remain' % len(self.terminals))
 
     def find_terminal_by_uuid(self, uuid):
         """Search our terminals for one matching the supplied UUID"""
@@ -330,7 +327,7 @@ class Terminator(Borg):
 
         for window in self.windows:
             if not window.is_child_notebook():
-                # For windows without a notebook ensure Terminal is visible and focussed
+                # For windows without a notebook ensure Terminal is visible and focused
                 if window_last_active_term_mapping[window]:
                     term = self.find_terminal_by_uuid(window_last_active_term_mapping[window].urn)
                     term.ensure_visible_and_focussed()
@@ -531,7 +528,7 @@ class Terminator(Borg):
     def create_group(self, name):
         """Create a new group"""
         if name not in self.groups:
-            dbg('Terminator::create_group: registering group %s' % name)
+            dbg('registering group %s' % name)
             self.groups.append(name)
 
     def closegroupedterms(self, group):
@@ -556,15 +553,14 @@ class Terminator(Borg):
                 if not group in inuse:
                     todestroy.append(group)
 
-            dbg('Terminator::group_hoover: %d groups, hoovering %d' %
+            dbg('%d groups, hoovering %d' %
                     (len(self.groups), len(todestroy)))
             for group in todestroy:
                 self.groups.remove(group)
 
     def group_emit(self, terminal, group, type, event):
         """Emit to each terminal in a group"""
-        dbg('Terminator::group_emit: emitting a keystroke for group %s' %
-                group)
+        dbg('emitting a keystroke for group %s' % group)
         for term in self.terminals:
             if term != terminal and term.group == group:
                 term.vte.emit(type, eventkey2gdkevent(event))
@@ -589,7 +585,17 @@ class Terminator(Borg):
 
         for term in self.get_target_terms(widget):
             idx = terminals.index(term)
-            term.feed(numstr % (idx + 1))
+            term.feed(numstr.encode() % (idx + 1))
+
+    def do_insert_term_name(self, widget):
+        terminals = []
+        for window in self.windows:
+            containers, win_terminals = enumerate_descendants(window)
+            terminals.extend(win_terminals)
+
+        for term in self.get_target_terms(widget):
+            name = term.titlebar.get_custom_string() or term.get_window_title()
+            term.feed(name)
 
     def get_sibling_terms(self, widget):
         termset = []
@@ -623,13 +629,13 @@ class Terminator(Borg):
     def focus_left(self, widget):
         self.last_focused_term=widget
 
-    def describe_layout(self):
+    def describe_layout(self, save_cwd = False):
         """Describe our current layout"""
         layout = {}
         count = 0
         for window in self.windows:
             parent = ''
-            count = window.describe_layout(count, parent, layout, 0)
+            count = window.describe_layout(count, parent, layout, 0, save_cwd)
 
         return(layout)
 
@@ -644,4 +650,18 @@ class Terminator(Borg):
     def zoom_orig_all(self):
         for term in self.terminals:
             term.zoom_orig()
+
+    def new_random_group(self):
+        defaultmembers=[_('Alpha'),_('Beta'),_('Gamma'),_('Delta'),_('Epsilon'),_('Zeta'),_('Eta'),
+                        _('Theta'),_('Iota'),_('Kappa'),_('Lambda'),_('Mu'),_('Nu'),_('Xi'),
+                        _('Omicron'),_('Pi'),_('Rho'),_('Sigma'),_('Tau'),_('Upsilon'),_('Phi'),
+                        _('Chi'),_('Psi'),_('Omega')]
+        currentgroups=set(self.groups)
+        for i in range(1,4):
+            defaultgroups=set(map(''.join, list(itertools.product(defaultmembers,repeat=i))))
+            freegroups = list(defaultgroups-currentgroups)
+            if freegroups:
+                return random.choice(freegroups)
+        return ''
+
 # vim: set expandtab ts=4 sw=4:

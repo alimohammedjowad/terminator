@@ -14,7 +14,6 @@ from .util import dbg, err
 from . import config
 from .keybindings import Keybindings, KeymapError
 from .translation import _
-from .encoding import TerminatorEncoding
 from .terminator import Terminator
 from .plugin import PluginRegistry
 from .version import APP_NAME
@@ -119,11 +118,13 @@ class PrefsEditor:
                         'go_right'         : _('Focus the terminal right'),
                         'rotate_cw'        : _('Rotate terminals clockwise'),
                         'rotate_ccw'       : _('Rotate terminals counter-clockwise'),
+                        'split_auto'       : _('Split automatically'),
                         'split_horiz'      : _('Split horizontally'),
                         'split_vert'       : _('Split vertically'),
                         'close_term'       : _('Close terminal'),
                         'copy'             : _('Copy selected text'),
                         'paste'            : _('Paste clipboard'),
+                        'paste_selection'  : _('Paste primary selection'),
                         'toggle_scrollbar' : _('Show/Hide the scrollbar'),
                         'search'           : _('Search terminal scrollback'),
                         'page_up'          : _('Scroll upwards one page'),
@@ -161,6 +162,9 @@ class PrefsEditor:
                         'group_all'        : _('Group all terminals'),
                         'group_all_toggle' : _('Group/Ungroup all terminals'),
                         'ungroup_all'      : _('Ungroup all terminals'),
+                        'group_win'        : _('Group terminals in window'),
+                        'group_win_toggle' : _('Group/Ungroup terminals in window'),
+                        'ungroup_win'      : _('Ungroup terminals in window'),
                         'group_tab'        : _('Group terminals in tab'),
                         'group_tab_toggle' : _('Group/Ungroup terminals in tab'),
                         'ungroup_tab'      : _('Ungroup terminals in tab'),
@@ -170,18 +174,19 @@ class PrefsEditor:
                         'broadcast_group'  : _('Broadcast key presses to group'),
                         'broadcast_all'    : _('Broadcast key events to all'),
                         'insert_number'    : _('Insert terminal number'),
-                        'insert_padded'    : _('Insert padded terminal number'),
+                        'insert_padded'    : _('Insert zero padded terminal number'),
                         'edit_window_title': _('Edit window title'),
                         'edit_terminal_title': _('Edit terminal title'),
                         'edit_tab_title'   : _('Edit tab title'),
                         'layout_launcher'  : _('Open layout launcher window'),
                         'next_profile'     : _('Switch to next profile'),
                         'previous_profile' : _('Switch to previous profile'), 
-			'preferences'	   : _('Open the Preferences window'),
+                        'preferences'	   : _('Open the Preferences window'),
+                        'preferences_keybindings' : _('Open the Preferences-Keybindings window'),
                         'help'             : _('Open the manual')
             }
 
-    def __init__ (self, term):
+    def __init__ (self, term, cur_page=0):
         self.config = config.Config()
         self.config.base.reload()
         self.term = term
@@ -224,6 +229,10 @@ class PrefsEditor:
             err('Unable to set values: %s' % e)
         self.config.uninhibit_save()
 
+        guiget = self.builder.get_object
+        nb = guiget('notebook1')
+        nb.set_current_page(cur_page)
+
     def on_closebutton_clicked(self, _button):
         """Close the window"""
         terminator = Terminator()
@@ -253,13 +262,23 @@ class PrefsEditor:
         widget.set_value(float(termsepsize))
         widget = guiget('handlesize_value_label')
         widget.set_text(str(termsepsize))
-        # Line Height
-        lineheightsize = self.config['line_height']
-        lineheightsize = round(float(lineheightsize),1)
-        widget = guiget('lineheight')
-        widget.set_value(lineheightsize)
-        widget = guiget('lineheight_value_label')
-        widget.set_text(str(lineheightsize))
+
+        # Cell Height
+        cellheightsize = self.config['cell_height']
+        cellheightsize = round(float(cellheightsize),1)
+        widget = guiget('cellheight')
+        widget.set_value(cellheightsize)
+        widget = guiget('cellheight_value_label')
+        widget.set_text(str(cellheightsize))
+
+        # Cell Width
+        cellwidthsize = self.config['cell_width']
+        cellwidthsize = round(float(cellwidthsize),1)
+        widget = guiget('cellwidth')
+        widget.set_value(cellwidthsize)
+        widget = guiget('cellwidth_value_label')
+        widget.set_text(str(cellwidthsize))
+
         # Window geometry hints
         geomhint = self.config['geometry_hinting']
         widget = guiget('wingeomcheck')
@@ -330,9 +349,6 @@ class PrefsEditor:
         #Show on all workspaces
         widget = guiget('stickycheck')
         widget.set_active(self.config['sticky'])
-        #Hide size text from the title bar
-        widget = guiget('title_hide_sizetextcheck')
-        widget.set_active(self.config['title_hide_sizetext'])
 
         # title bar at bottom
         widget = guiget('title_at_bottom_checkbutton')
@@ -353,25 +369,20 @@ class PrefsEditor:
         # Smart copy
         widget = guiget('smart_copy')
         widget.set_active(self.config['smart_copy'])
-        #Titlebar font selector
-        # Use system font
-        widget = guiget('title_system_font_checkbutton')
-        widget.set_active(self.config['title_use_system_font'])
-        self.on_title_system_font_checkbutton_toggled(widget)
-        # Font selector
-        widget = guiget('title_font_selector')
-        if self.config['title_use_system_font'] == True:
-            fontname = self.config.get_system_prop_font()
-            if fontname is not None:
-                widget.set_font_name(fontname)
-        else:
-            widget.set_font_name(self.config['title_font'])
+        # Clear selection on copy
+        widget = guiget('clear_select_on_copy')
+        widget.set_active(self.config['clear_select_on_copy'])
+        # Disable mouse paste
+        widget = guiget('disable_mouse_paste')
+        widget.set_active(self.config['disable_mouse_paste'])
 
         ## Profile tab
         # Populate the profile list
         widget = guiget('profilelist')
         liststore = widget.get_model()
         profiles = self.config.list_profiles()
+        if '__internal_json_profile__' in profiles:
+            profiles.remove('__internal_json_profile__')
         self.profileiters = {}
         for profile in profiles:
             if profile == 'default':
@@ -387,6 +398,8 @@ class PrefsEditor:
         widget = guiget('layoutlist')
         liststore = widget.get_model()
         layouts = self.config.list_layouts()
+        if '__internal_json_layout__' in layouts:
+            layouts.remove('__internal_json_layout__')
         self.layoutiters = {}
         for layout in layouts:
             if layout == 'default':
@@ -397,7 +410,7 @@ class PrefsEditor:
         selection = widget.get_selection()
         selection.connect('changed', self.on_layout_selection_changed)
         terminator = Terminator()
-        if terminator.layoutname:
+        if terminator.layoutname and terminator.layoutname != '__internal_json_layout__':
             layout_to_highlight = terminator.layoutname
         else:
             layout_to_highlight = 'default'
@@ -408,7 +421,47 @@ class PrefsEditor:
         selection.connect('changed', self.on_layout_item_selection_changed)
 
         ## Keybindings tab
-        widget = guiget('keybindingtreeview')
+        widget   = guiget('keybindingtreeview')
+        kbsearch = guiget('keybindingsearchentry')
+        self.keybind_filter_str = ""
+
+        #lets hide whatever we can in nested scope
+        def filter_visible(model, treeiter, data):
+            act  = model[treeiter][0]
+            keys = data[act] if act in data else ""
+            desc = model[treeiter][1]
+            kval = model[treeiter][2]
+            mask = model[treeiter][3]
+            #so user can search for disabled keys also
+            if not (len(keys) and kval and mask):
+                act = "Disabled"
+
+            self.keybind_filter_str = self.keybind_filter_str.lower()
+            searchtxt = (act + " " + keys + " " + desc).lower()
+            pos = searchtxt.find(self.keybind_filter_str)
+            if (pos >= 0):
+                dbg("filter find:%s in search text: %s" %
+                                (self.keybind_filter_str, searchtxt))
+                return True
+
+            return False
+
+        def on_search(widget, text):
+            MAX_SEARCH_LEN = 10
+            self.keybind_filter_str = widget.get_text()
+            ln = len(self.keybind_filter_str)
+            #its a small list & we are eager for quick search, but limit
+            if (ln >=2 and ln < MAX_SEARCH_LEN):
+                dbg("filter search str: %s" % self.keybind_filter_str)
+                self.treemodelfilter.refilter()
+
+        def on_search_refilter(widget):
+            dbg("refilter")
+            self.treemodelfilter.refilter()
+
+        kbsearch.connect('key-press-event', on_search)
+        kbsearch.connect('backspace', on_search_refilter)
+
         liststore = widget.get_model()
         liststore.set_sort_column_id(0, Gtk.SortType.ASCENDING)
         keybindings = self.config['keybindings']
@@ -423,6 +476,10 @@ class PrefsEditor:
                     pass
             liststore.append([keybinding, self.keybindingnames[keybinding],
                              keyval, mask])
+
+        self.treemodelfilter = liststore.filter_new()
+        self.treemodelfilter.set_visible_func(filter_visible, keybindings)
+        widget.set_model(self.treemodelfilter)
 
         ## Plugins tab
         # Populate the plugin list
@@ -449,7 +506,7 @@ class PrefsEditor:
         self.config.set_profile(profile)
         guiget = self.builder.get_object
 
-        dbg('PrefsEditor::set_profile_values: Setting profile %s' % profile)
+        dbg('Setting profile %s' % profile)
 
         ## General tab
         # Use system font
@@ -504,24 +561,27 @@ class PrefsEditor:
         # Cursor blink
         widget = guiget('cursor_blink')
         widget.set_active(self.config['cursor_blink'])
-        # Cursor colour - Radio values
-        if self.config['cursor_color_fg']:
-            widget = guiget('cursor_color_foreground_radiobutton')
-        else:
-            widget = guiget('cursor_color_custom_radiobutton')
-        widget.set_active(True)
-        # Cursor colour - swatch
-        widget = guiget('cursor_color')
-        widget.set_sensitive(not self.config['cursor_color_fg'])
+        # Cursor use default colors
+        widget = guiget('cursor_color_default_checkbutton')
+        widget.set_active(self.config['cursor_color_default'])
+        # Cursor foreground
+        widget = guiget('cursor_fg_color')
         try:
-            widget.set_color(Gdk.color_parse(self.config['cursor_color']))
-        except (ValueError, TypeError):
+            widget.set_color(Gdk.color_parse(self.config['cursor_fg_color']))
+        except:
             try:
-                self.config['cursor_color'] = self.config['foreground_color']
-                widget.set_color(Gdk.color_parse(self.config['cursor_color']))
-            except ValueError:
-                self.config['cursor_color'] = "#FFFFFF"
-                widget.set_color(Gdk.color_parse(self.config['cursor_color']))
+                widget.set_color(Gdk.color_parse(self.config['background_color']))
+            except:
+                widget.set_color(Gdk.color_parse('#000000'))
+        # Cursor background
+        widget = guiget('cursor_bg_color')
+        try:
+            widget.set_color(Gdk.color_parse(self.config['cursor_bg_color']))
+        except:
+            try:
+                widget.set_color(Gdk.color_parse(self.config['foreground_color']))
+            except:
+                widget.set_color(Gdk.color_parse('#ffffff'))
 
         ## Command tab
         # Login shell
@@ -609,17 +669,15 @@ class PrefsEditor:
         # Now set the palette selector widget
         widget = guiget('palette_combobox')
         widget.set_active(self.palettevalues[palette])
-        # Titlebar colors
-        for bit in ['title_transmit_fg_color', 'title_transmit_bg_color',
-            'title_receive_fg_color', 'title_receive_bg_color',
-            'title_inactive_fg_color', 'title_inactive_bg_color']:
-            widget = guiget(bit)
-            widget.set_color(Gdk.color_parse(self.config[bit]))
         # Inactive terminal shading
         widget = guiget('inactive_color_offset')
         widget.set_value(float(self.config['inactive_color_offset']))
         widget = guiget('inactive_color_offset_value_label')
         widget.set_text('%d%%' % (int(float(self.config['inactive_color_offset'])*100)))
+        widget = guiget('inactive_bg_color_offset')
+        widget.set_value(float(self.config['inactive_bg_color_offset']))
+        widget = guiget('inactive_bg_color_offset_value_label')
+        widget.set_text('%d%%' % (int(float(self.config['inactive_bg_color_offset'])*100)))
         # Open links with a single click (instead of a Ctrl-left click)
         widget = guiget('link_single_click')
         widget.set_active(self.config['link_single_click'])
@@ -640,11 +698,42 @@ class PrefsEditor:
         elif self.config['background_type'] == 'image':
             guiget('image_radiobutton').set_active(True)
         self.update_background_tab()
+        # Background image
+        widget = guiget('background_image_file')
+        widget.set_filename(self.config['background_image'])
+
+        widget = guiget('background_image_mode_combobox')
+        if self.config['background_image_mode'] == 'scale_and_fit':
+            widget.set_active(1)
+        elif self.config['background_image_mode'] == 'scale_and_crop':
+            widget.set_active(2)
+        elif self.config['background_image_mode'] == 'tiling':
+            widget.set_active(3)
+        else:
+            # default to stretch_and_fill
+            widget.set_active(0)
+
+        widget = guiget('background_image_align_horiz_combobox')
+        if self.config['background_image_align_horiz'] == 'center':
+            widget.set_active(1)
+        elif self.config['background_image_align_horiz'] == 'right':
+            widget.set_active(2)
+        else:
+            # default to left
+            widget.set_active(0)
+
+        widget = guiget('background_image_align_vert_combobox')
+        if self.config['background_image_align_vert'] == 'middle':
+            widget.set_active(1)
+        elif self.config['background_image_align_vert'] == 'bottom':
+            widget.set_active(2)
+        else:
+            # default to top
+            widget.set_active(0)
+
         # Background shading
         widget = guiget('background_darkness_scale')
         widget.set_value(float(self.config['background_darkness']))
-        widget = guiget('background_image_file')
-        widget.set_filename(self.config['background_image'])
    
         ## Scrolling tab
         # Scrollbar position
@@ -662,7 +751,7 @@ class PrefsEditor:
         # Scrollback infinite
         widget = guiget('scrollback_infinite')
         widget.set_active(self.config['scrollback_infinite'])
-        # Scroll on outut
+        # Scroll on output
         widget = guiget('scroll_on_output_checkbutton')
         widget.set_active(self.config['scroll_on_output'])
         # Scroll on keystroke
@@ -692,23 +781,29 @@ class PrefsEditor:
             widget.set_active(3)
         else:
             widget.set_active(0)
-        # Encoding
-        rowiter = None
-        widget = guiget('encoding_combobox')
-        encodingstore = guiget('EncodingListStore')
-        value = self.config['encoding']
-        encodings = TerminatorEncoding().get_list()
-        encodings.sort(key=lambda x: x[2].lower())
 
-        for encoding in encodings:
-            if encoding[1] is None:
-                continue
-
-            label = "%s %s" % (encoding[2], encoding[1])
-            rowiter = encodingstore.append([label, encoding[1]])
-
-            if encoding[1] == value:
-                widget.set_active_iter(rowiter)
+        ## Titlebar tab
+        # Titlebar colors
+        for bit in ['title_transmit_fg_color', 'title_transmit_bg_color',
+            'title_receive_fg_color', 'title_receive_bg_color',
+            'title_inactive_fg_color', 'title_inactive_bg_color']:
+            widget = guiget(bit)
+            widget.set_color(Gdk.color_parse(self.config[bit]))
+        # Hide size text from the title bar
+        widget = guiget('title_hide_sizetextcheck')
+        widget.set_active(self.config['title_hide_sizetext'])
+        # Use system font
+        widget = guiget('title_system_font_checkbutton')
+        widget.set_active(self.config['title_use_system_font'])
+        self.on_title_system_font_checkbutton_toggled(widget)
+        # Font selector
+        widget = guiget('title_font_selector')
+        if self.config['title_use_system_font'] == True:
+            fontname = self.config.get_system_prop_font()
+            if fontname is not None:
+                widget.set_font_name(fontname)
+        else:
+            widget.set_font_name(self.config['title_font'])
 
     def set_layout(self, layout_name):
         """Set a layout"""
@@ -828,6 +923,11 @@ class PrefsEditor:
         self.config['clear_select_on_copy'] = widget.get_active()
         self.config.save()
 
+    def on_disable_mouse_paste_toggled(self, widget):
+        """Disable mouse paste"""
+        self.config['disable_mouse_paste'] = widget.get_active()
+        self.config.save()
+
     def on_cursor_blink_toggled(self, widget):
         """Cursor blink setting changed"""
         self.config['cursor_blink'] = widget.get_active()
@@ -901,15 +1001,6 @@ class PrefsEditor:
         self.config['backspace_binding'] = value
         self.config.save()
 
-    def on_encoding_combobox_changed(self, widget):
-        """Encoding setting changed"""
-        selected = widget.get_active_iter()
-        liststore = widget.get_model()
-        value = liststore.get_value(selected, 1)
-
-        self.config['encoding'] = value
-        self.config.save()
-
     def on_scrollback_lines_spinbutton_value_changed(self, widget):
         """Scrollback lines setting changed"""
         value = widget.get_value_as_int()
@@ -940,8 +1031,42 @@ class PrefsEditor:
         self.config.save()
 
     def on_background_image_file_set(self,widget):
-        print(widget.get_filename())
         self.config['background_image'] = widget.get_filename()
+        self.config.save()
+
+    def on_background_image_mode_changed(self, widget):
+        selected = widget.get_active()
+        if selected == 1:
+            value = 'scale_and_fit'
+        elif selected == 2:
+            value = 'scale_and_crop'
+        elif selected == 3:
+            value = 'tiling'
+        else:
+            value = 'stretch_and_fill'
+        self.config['background_image_mode'] = value
+        self.config.save()
+
+    def on_background_image_align_horiz_changed(self, widget):
+        selected = widget.get_active()
+        if selected == 1:
+            value = 'center'
+        elif selected == 2:
+            value = 'right'
+        else:
+            value = 'left'
+        self.config['background_image_align_horiz'] = value
+        self.config.save()
+
+    def on_background_image_align_vert_changed(self, widget):
+        selected = widget.get_active()
+        if selected == 1:
+            value = 'middle'
+        elif selected == 2:
+            value = 'bottom'
+        else:
+            value = 'top'
+        self.config['background_image_align_vert'] = value
         self.config.save()
 
     def on_darken_background_scale_value_changed(self, widget):
@@ -960,10 +1085,6 @@ class PrefsEditor:
         for key in list(self.palettevalues.keys()):
             if self.palettevalues[key] == active:
                 value = key
-
-        sensitive = value == 'custom'
-        for palette_id in range(0, NUM_PALETTE_COLORS):
-            self.get_palette_widget(palette_id).set_sensitive(sensitive)
 
         if value in self.palettes:
             palette = self.palettes[value]
@@ -1149,29 +1270,30 @@ class PrefsEditor:
         self.config['custom_command'] = widget.get_text()
         self.config.save()
 
-    def on_cursor_color_type_toggled(self, widget):
+    def on_cursor_color_default_checkbutton_toggled(self, checkbutton):
+        """Cursor: Use default colors changed"""
         guiget = self.builder.get_object
 
-        customwidget = guiget('cursor_color_custom_radiobutton')
-        colorwidget = guiget('cursor_color')
-        
-        colorwidget.set_sensitive(customwidget.get_active())
-        self.config['cursor_color_fg'] = not customwidget.get_active()
-        
-        try:
-            colorwidget.set_color(Gdk.color_parse(self.config['cursor_color']))
-        except (ValueError, TypeError):
-            try:
-                self.config['cursor_color'] = self.config['foreground_color']
-                colorwidget.set_color(Gdk.color_parse(self.config['cursor_color']))
-            except ValueError:
-                self.config['cursor_color'] = "#FFFFFF"
-                colorwidget.set_color(Gdk.color_parse(self.config['cursor_color']))
+        value = checkbutton.get_active()
+        guiget('cursor_fg_color').set_sensitive(not value)
+        guiget('cursor_bg_color').set_sensitive(not value)
+
+        if not value:
+            self.config['cursor_fg_color'] = color2hex(guiget('cursor_fg_color'))
+            self.config['cursor_bg_color'] = color2hex(guiget('cursor_bg_color'))
+            self.config.save()
+
+        self.config['cursor_color_default'] = value
         self.config.save()
 
-    def on_cursor_color_color_set(self, widget):
-        """Cursor colour changed"""
-        self.config['cursor_color'] = color2hex(widget)
+    def on_cursor_fg_color_color_set(self, widget):
+        """Cursor foreground color changed"""
+        self.config['cursor_fg_color'] = color2hex(widget)
+        self.config.save()
+
+    def on_cursor_bg_color_color_set(self, widget):
+        """Cursor background color changed"""
+        self.config['cursor_bg_color'] = color2hex(widget)
         self.config.save()
 
     def on_cursor_shape_combobox_changed(self, widget):
@@ -1217,7 +1339,7 @@ class PrefsEditor:
         self.config.save()
 
     def on_title_transmit_bg_color_color_set(self, widget):
-        """Title transmit backgruond colour changed"""
+        """Title transmit background colour changed"""
         self.config['title_transmit_bg_color'] = color2hex(widget)
         self.config.save()
 
@@ -1242,28 +1364,53 @@ class PrefsEditor:
         label_widget = guiget('inactive_color_offset_value_label')
         label_widget.set_text('%d%%' % (int(value * 100)))
 
+    def on_inactive_bg_color_offset_value_changed(self, widget):
+        """Inactive background color offset setting changed"""
+        value = widget.get_value()  # This one is rounded according to the UI.
+        if value > 1.0:
+          value = 1.0
+        self.config['inactive_bg_color_offset'] = value
+        self.config.save()
+        guiget = self.builder.get_object
+        label_widget = guiget('inactive_bg_color_offset_value_label')
+        label_widget.set_text('%d%%' % (int(value * 100)))
+
     def on_handlesize_value_changed(self, widget):
         """Handle size changed"""
         value = widget.get_value()  # This one is rounded according to the UI.
         value = int(value)          # Cast to int.
         if value > 20:
             value = 20
+        if value < 1:
+            value = 1
         self.config['handle_size'] = value
         self.config.save()
         guiget = self.builder.get_object
         label_widget = guiget('handlesize_value_label')
         label_widget.set_text(str(value))
 
-    def on_lineheight_value_changed(self, widget):
-        """Handles line height changed"""
+    def on_cellheight_value_changed(self, widget):
+        """Handles cell height changed"""
         value = widget.get_value()
         value = round(float(value), 1)
         if value > 2.0:
             value = 2.0
-        self.config['line_height'] = value
+        self.config['cell_height'] = value
         self.config.save()
         guiget = self.builder.get_object
-        label_widget = guiget('lineheight_value_label')
+        label_widget = guiget('cellheight_value_label')
+        label_widget.set_text(str(value))
+
+    def on_cellwidth_value_changed(self, widget):
+        """Handles cell width changed"""
+        value = widget.get_value()
+        value = round(float(value), 1)
+        if value > 2.0:
+            value = 2.0
+        self.config['cell_width'] = value
+        self.config.save()
+        guiget = self.builder.get_object
+        label_widget = guiget('cellwidth_value_label')
         label_widget.set_text(str(value))
 
     def on_focuscombo_changed(self, widget):
@@ -1320,22 +1467,23 @@ class PrefsEditor:
         self.config['window_state'] = value
         self.config.save()
 
-    def on_profileaddbutton_clicked(self, _button):
-        """Add a new profile to the list"""
+    # helper function, not a signal
+    def addprofile(self, name, toclone):
+        """Add a profile"""
         guiget = self.builder.get_object
 
         treeview = guiget('profilelist')
         model = treeview.get_model()
         values = [ r[0] for r in model ]
 
-        newprofile = _('New Profile')
+        newprofile = name
         if newprofile in values:
             i = 1
             while newprofile in values:
                 i = i + 1
-                newprofile = '%s %d' % (_('New Profile'), i)
+                newprofile = '%s %d' % (name, i)
 
-        if self.config.add_profile(newprofile):
+        if self.config.add_profile(newprofile, toclone):
             res = model.append([newprofile, True])
             if res:
                 path = model.get_path(res)
@@ -1343,6 +1491,10 @@ class PrefsEditor:
                                     start_editing=True)
 
         self.layouteditor.update_profiles()
+
+    def on_profileaddbutton_clicked(self, _button):
+        """Add a new profile to the list"""
+        self.addprofile(_('New Profile'), None)
 
     def on_profileremovebutton_clicked(self, _button):
         """Remove a profile from the list"""
@@ -1362,6 +1514,18 @@ class PrefsEditor:
         model.remove(rowiter)
         selection.select_iter(model.get_iter_first())
         self.layouteditor.update_profiles()
+
+    def on_profileclonebutton_clicked(self, _button):
+        """"Clone a profile and add the new one to the list"""
+        guiget = self.builder.get_object
+
+        treeview = guiget('profilelist')
+        selection = treeview.get_selection()
+        (model, rowiter) = selection.get_selected()
+        profile = model.get_value(rowiter, 0)
+
+        toclone = self.config.get_profile_by_name(profile)
+        self.addprofile(profile, toclone)
 
     def on_layoutaddbutton_clicked(self, _button):
         """Add a new layout to the list"""
@@ -1520,10 +1684,12 @@ class PrefsEditor:
         self.config['background_type'] = backtype
         self.config.save()
 
-        if backtype == 'image':
-                guiget('background_image_file').set_sensitive(True)
-        else:
-                guiget('background_image_file').set_sensitive(False)
+        # toggle sensitivity of widgets related to background image
+        for element in ('background_image_file',
+                        'background_image_align_horiz_combobox',
+                        'background_image_align_vert_combobox',
+                        'background_image_mode_combobox'):
+            guiget(element).set_sensitive(backtype == 'image')
 
         if backtype in ('transparent', 'image'):
             guiget('darken_background_scale').set_sensitive(True)
@@ -1596,8 +1762,7 @@ class PrefsEditor:
         oldname = cell.get_property('text')
         if oldname == newtext or oldname == 'default':
             return
-        dbg('PrefsEditor::on_profile_name_edited: Changing %s to %s' %
-        (oldname, newtext))
+        dbg('Changing %s to %s' % (oldname, newtext))
         self.config.rename_profile(oldname, newtext)
         self.config.save()
 
@@ -1661,12 +1826,8 @@ class PrefsEditor:
 
         fore = guiget('foreground_colorbutton')
         back = guiget('background_colorbutton')
-        if value == 'custom':
-            fore.set_sensitive(True)
-            back.set_sensitive(True)
-        else:
-            fore.set_sensitive(False)
-            back.set_sensitive(False)
+        fore.set_sensitive(True)
+        back.set_sensitive(True)
 
         forecol = None
         backcol = None
@@ -1702,6 +1863,11 @@ class PrefsEditor:
         self.config.save()
 
     def on_cellrenderer_accel_edited(self, liststore, path, key, mods, _code):
+        inpath = path #save for debugging
+        trpath = Gtk.TreePath.new_from_string(inpath)
+        path   = str(self.treemodelfilter.convert_path_to_child_path(trpath))
+        dbg("convert path with filter from: %s to: %s" %
+                                        (inpath, path))
         """Handle an edited keybinding"""
         # Ignore `Gdk.KEY_Tab` so that `Shift+Tab` is displayed as `Shift+Tab`
         # in `Preferences>Keybindings` and NOT `Left Tab` (see `Gdk.KEY_ISO_Left_Tab`).
@@ -1723,10 +1889,13 @@ class PrefsEditor:
 
         accel = Gtk.accelerator_name(key, mods)
         current_binding = liststore.get_value(liststore.get_iter(path), 0)
+        parsed_accel = Gtk.accelerator_parse(accel)
 
         duplicate_bindings = []
         for conf_binding, conf_accel in self.config["keybindings"].items():
-            parsed_accel = Gtk.accelerator_parse(accel)
+            if conf_accel is None:
+                continue
+
             parsed_conf_accel = Gtk.accelerator_parse(conf_accel)
 
             if (
@@ -1769,6 +1938,12 @@ class PrefsEditor:
         self.config.save()
 
     def on_cellrenderer_accel_cleared(self, liststore, path):
+        inpath = path #save for debugging
+        trpath = Gtk.TreePath.new_from_string(inpath)
+        path   = str(self.treemodelfilter.convert_path_to_child_path(trpath))
+        dbg("convert path with filter from: %s to: %s" %
+                                        (inpath, path))
+
         """Handle the clearing of a keybinding accelerator"""
         celliter = liststore.get_iter_from_string(path)
         liststore.set(celliter, 2, 0, 3, 0)

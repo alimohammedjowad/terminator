@@ -93,6 +93,7 @@ class Paned(Container):
         if self.maker.isinstance(widget, 'Terminal'):
             top_window = self.get_toplevel()
             signals = {'close-term': self.wrapcloseterm,
+                    'split-auto': self.split_auto,
                     'split-horiz': self.split_horiz,
                     'split-vert': self.split_vert,
                     'title-change': self.propagate_title_change,
@@ -103,6 +104,9 @@ class Paned(Container):
                     'group-all': top_window.group_all,
                     'group-all-toggle': top_window.group_all_toggle,
                     'ungroup-all': top_window.ungroup_all,
+                    'group-win': top_window.group_win,
+                    'group-win-toggle': top_window.group_win_toggle,
+                    'ungroup-win': top_window.ungroup_win,
                     'group-tab': top_window.group_tab,
                     'group-tab-toggle': top_window.group_tab_toggle,
                     'ungroup-tab': top_window.ungroup_tab,
@@ -269,7 +273,7 @@ class Paned(Container):
 
     def wrapcloseterm(self, widget):
         """A child terminal has closed, so this container must die"""
-        dbg('Paned::wrapcloseterm: Called on %s' % widget)
+        dbg('Called on %s' % widget)
 
         if self.closeterm(widget):
             # At this point we only have one child, which is the surviving term
@@ -313,12 +317,12 @@ class Paned(Container):
                 except AttributeError:
                     dbg('cannot find terminal with uuid: %s' % sibling.get_toplevel().last_active_term.urn)
         else:
-            dbg("Paned::wrapcloseterm: self.closeterm failed")
+            dbg("self.closeterm failed")
 
     def hoover(self):
         """Check that we still have a reason to exist"""
         if len(self.children) == 1:
-            dbg('Paned::hoover: We only have one child, die')
+            dbg('We only have one child, die')
             parent = self.get_parent()
             child = self.children[0]
             self.remove(child)
@@ -421,7 +425,7 @@ class Paned(Container):
         """We don't want focus, we want a Terminal to have it"""
         self.get_child1().grab_focus()
 
-    def rotate_recursive(self, parent, w, h, clockwise):
+    def rotate_recursive(self, parent, w, h, clockwise, metadata=None):
         """
         Recursively rotate "self" into a new paned that'll have "w" x "h" size. Attach it to "parent".
 
@@ -455,7 +459,7 @@ class Paned(Container):
             w2 = max(w - w1 - handle_size, 0)
 
         container.set_pos(pos)
-        parent.add(container)
+        parent.add(container, metadata=metadata)
 
         if maker.isinstance(children[0], 'Terminal'):
             children[0].get_parent().remove(children[0])
@@ -488,11 +492,15 @@ class Paned(Container):
         return float(position) / float(non_separator_size)
 
     def set_position_by_ratio(self):
+        # For reasons unknown to me, self.ratio often changes when the following loop is executed
+        ratio = self.ratio
+
         # Fix for strange race condition where every so often get_length returns 1. (LP:1655027)
         while self.terminator.doing_layout and self.get_length() == 1:
             while Gtk.events_pending():
                 Gtk.main_iteration()
 
+        self.ratio = ratio
         self.set_pos(self.position_by_ratio(self.get_length(), self.get_handlesize(), self.ratio))
 
     def set_position(self, pos):
